@@ -4,26 +4,28 @@ import {
   Card, 
   Input, 
   Button, 
-  Upload, 
   message, 
   Spin, 
   Tabs, 
   Space,
   Typography,
-  Divider
+  Tag,
+  Progress
 } from 'antd';
 import { 
   UploadOutlined, 
   SendOutlined, 
   ClearOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  DownloadOutlined,
+  DeleteOutlined
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const { Header, Content, Footer } = Layout;
 const { TextArea } = Input;
-const { Title, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
 // 后端API配置 - 修改为你的实际后端地址
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -34,6 +36,15 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  fileName?: string;
+}
+
+// 上传文件类型定义
+interface UploadedFile {
+  name: string;
+  size: number;
+  type: string;
+  content: string;
 }
 
 const App: React.FC = () => {
@@ -41,9 +52,12 @@ const App: React.FC = () => {
   const [inputText, setInputText] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [fileContent, setFileContent] = useState<string>('');
+  const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
   
+  // 原生文件输入ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 自动滚动到底部
@@ -51,39 +65,116 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // 文件上传处理
-  const handleFileUpload = (options: any) => {
-    const { file } = options;
+  // 文件大小格式化
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  };
+
+  // 点击上传按钮触发原生文件选择
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // 原生文件选择处理（100%可靠）
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    const file = files[0];
+    const maxSize = 10 * 1024 * 1024; // 10MB限制
+
+    // 检查文件大小
+    if (file.size > maxSize) {
+      message.error(`文件大小不能超过10MB，当前文件大小: ${formatFileSize(file.size)}`);
+      // 清空input，允许重复选择同一个文件
+      e.target.value = '';
+      return;
+    }
+
+    // 检查文件类型
+    const allowedExtensions = ['.txt', '.log', '.csv', '.json', '.md'];
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      message.error(`不支持的文件格式，请上传 ${allowedExtensions.join(', ')} 文件`);
+      e.target.value = '';
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
     const reader = new FileReader();
     
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      setFileContent(content);
-      setUploadedFile(file);
-      message.success(`文件 "${file.name}" 上传成功，大小: ${(file.size / 1024).toFixed(2)} KB`);
+    // 模拟上传进度
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 90) {
+          clearInterval(progressInterval);
+          return 90;
+        }
+        return prev + 10;
+      });
+    }, 50);
+
+    reader.onload = (event) => {
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      
+      const content = event.target?.result as string;
+      
+      setUploadedFile({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        content: content
+      });
+
+      message.success(`文件 "${file.name}" 上传成功`);
+      setIsUploading(false);
+      // 清空input，允许重复选择同一个文件
+      e.target.value = '';
     };
     
     reader.onerror = () => {
-      message.error('文件读取失败');
+      clearInterval(progressInterval);
+      message.error('文件读取失败，请检查文件是否损坏');
+      setIsUploading(false);
+      e.target.value = '';
     };
     
-    // 支持的文件格式
-    if (file.type === 'text/plain' || 
-        file.name.endsWith('.log') || 
-        file.name.endsWith('.csv') || 
-        file.name.endsWith('.json') ||
-        file.name.endsWith('.txt')) {
-      reader.readAsText(file);
-    } else {
-      message.error('不支持的文件格式，请上传 .txt, .log, .csv, .json 文件');
-    }
+    reader.readAsText(file);
+  };
+
+  // 文件下载功能
+  const handleDownloadFile = () => {
+    if (!uploadedFile) return;
+
+    const blob = new Blob([uploadedFile.content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
     
-    // 阻止Ant Design默认上传行为
-    return false;
+    link.href = url;
+    link.download = uploadedFile.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    message.success(`文件 "${uploadedFile.name}" 下载成功`);
+  };
+
+  // 删除上传的文件
+  const handleDeleteFile = () => {
+    setUploadedFile(null);
+    setUploadProgress(0);
+    message.info('文件已删除');
   };
 
   // 发送请求到后端LLM API
-  const sendToLLM = async (prompt: string) => {
+  const sendToLLM = async (prompt: string, fileName?: string) => {
     setIsLoading(true);
     
     // 添加用户消息
@@ -91,13 +182,14 @@ const App: React.FC = () => {
       id: Date.now().toString(),
       role: 'user',
       content: prompt,
-      timestamp: new Date()
+      timestamp: new Date(),
+      fileName: fileName
     };
     
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
-    setFileContent('');
     setUploadedFile(null);
+    setUploadProgress(0);
     
     // 添加空的助手消息，用于流式填充
     const assistantMessageId = (Date.now() + 1).toString();
@@ -163,17 +255,20 @@ const App: React.FC = () => {
 
   // 提交按钮处理
   const handleSubmit = () => {
-    if (!inputText.trim() && !fileContent.trim()) {
+    if (!inputText.trim() && !uploadedFile) {
       message.warning('请输入文本或上传文件');
       return;
     }
     
     let fullPrompt = inputText;
-    if (fileContent) {
-      fullPrompt += `\n\n--- 上传的文件内容 (${uploadedFile?.name}) ---\n${fileContent}`;
+    let fileName: string | undefined = undefined;
+    
+    if (uploadedFile) {
+      fileName = uploadedFile.name;
+      fullPrompt += `\n\n--- 上传的文件内容 (${uploadedFile.name}) ---\n${uploadedFile.content}`;
     }
     
-    sendToLLM(fullPrompt);
+    sendToLLM(fullPrompt, fileName);
   };
 
   // 清空历史
@@ -211,22 +306,33 @@ const App: React.FC = () => {
             style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
             extra={
               <Space>
-                <Upload 
-                  beforeUpload={handleFileUpload}
-                  showUploadList={false}
-                  accept=".txt,.log,.csv,.json"
+                {/* 隐藏的原生文件输入 */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept=".txt,.log,.csv,.json,.md"
+                  style={{ display: 'none' }}
+                />
+                
+                {/* 自定义上传按钮 */}
+                <Button 
+                  icon={<UploadOutlined />} 
+                  loading={isUploading}
+                  onClick={handleUploadClick}
+                  disabled={isLoading}
                 >
-                  <Button icon={<UploadOutlined />}>
-                    上传数据文件
-                  </Button>
-                </Upload>
+                  {isUploading ? '上传中...' : '上传数据文件'}
+                </Button>
+                
                 <Button 
                   icon={<ClearOutlined />} 
                   onClick={() => {
                     setInputText('');
-                    setFileContent('');
                     setUploadedFile(null);
+                    setUploadProgress(0);
                   }}
+                  disabled={isLoading}
                 >
                   清空
                 </Button>
@@ -234,6 +340,51 @@ const App: React.FC = () => {
             }
           >
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              {/* 上传进度条 */}
+              {isUploading && (
+                <Progress 
+                  percent={uploadProgress} 
+                  status="active" 
+                  style={{ marginBottom: '16px' }}
+                />
+              )}
+
+              {/* 已上传文件信息 */}
+              {uploadedFile && (
+                <div style={{ 
+                  padding: '12px', 
+                  background: '#f0f5ff', 
+                  borderRadius: '8px', 
+                  marginBottom: '16px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <FileTextOutlined style={{ marginRight: '8px', color: '#1890ff' }} />
+                    <Text strong>{uploadedFile.name}</Text>
+                    <Tag color="blue" style={{ marginLeft: '8px' }}>
+                      {formatFileSize(uploadedFile.size)}
+                    </Tag>
+                  </div>
+                  <Space>
+                    <Button 
+                      type="text" 
+                      icon={<DownloadOutlined />} 
+                      onClick={handleDownloadFile}
+                      title="下载文件"
+                    />
+                    <Button 
+                      type="text" 
+                      danger 
+                      icon={<DeleteOutlined />} 
+                      onClick={handleDeleteFile}
+                      title="删除文件"
+                    />
+                  </Space>
+                </div>
+              )}
+
               <Tabs
                 items={[
                   {
@@ -244,8 +395,9 @@ const App: React.FC = () => {
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
                         placeholder="请输入需要分析的告警信息、日志内容或问题描述..."
-                        rows={15}
+                        rows={uploadedFile ? 10 : 15}
                         style={{ marginBottom: '16px' }}
+                        disabled={isLoading}
                       />
                     )
                   },
@@ -253,24 +405,25 @@ const App: React.FC = () => {
                     key: 'file',
                     label: '文件内容预览',
                     children: uploadedFile ? (
-                      <div>
-                        <Paragraph>
-                          <FileTextOutlined /> 当前文件: <strong>{uploadedFile.name}</strong>
-                        </Paragraph>
-                        <TextArea
-                          value={fileContent}
-                          onChange={(e) => setFileContent(e.target.value)}
-                          rows={13}
-                          readOnly={false}
-                        />
-                      </div>
+                      <TextArea
+                        value={uploadedFile.content}
+                        onChange={(e) => setUploadedFile(prev => 
+                          prev ? { ...prev, content: e.target.value } : null
+                        )}
+                        rows={13}
+                        readOnly={false}
+                        style={{ marginBottom: '16px' }}
+                      />
                     ) : (
                       <div style={{ 
                         textAlign: 'center', 
-                        padding: '40px 0',
+                        padding: '60px 0',
                         color: '#999'
                       }}>
-                        请先上传数据文件
+                        <Paragraph>请先上传数据文件</Paragraph>
+                        <Paragraph type="secondary">
+                          支持 .txt, .log, .csv, .json, .md 格式
+                        </Paragraph>
                       </div>
                     )
                   }
@@ -300,7 +453,7 @@ const App: React.FC = () => {
               <Button 
                 icon={<ClearOutlined />} 
                 onClick={handleClearHistory}
-                disabled={messages.length === 0}
+                disabled={messages.length === 0 || isLoading}
               >
                 清空历史
               </Button>
@@ -337,9 +490,22 @@ const App: React.FC = () => {
                     <div style={{ 
                       fontWeight: 'bold', 
                       marginBottom: '8px',
-                      color: msg.role === 'user' ? '#1890ff' : '#52c41a'
+                      color: msg.role === 'user' ? '#1890ff' : '#52c41a',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
                     }}>
-                      {msg.role === 'user' ? '👤 输入数据' : '🤖 分析结果'}
+                      <span>
+                        {msg.role === 'user' ? '👤 输入数据' : '🤖 分析结果'}
+                        {msg.fileName && (
+                          <Tag color="blue" style={{ marginLeft: '8px' }}>
+                            附件: {msg.fileName}
+                          </Tag>
+                        )}
+                      </span>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        {msg.timestamp.toLocaleTimeString()}
+                      </Text>
                     </div>
                     <div style={{ lineHeight: '1.6' }}>
                       {msg.role === 'assistant' ? (
@@ -351,10 +517,11 @@ const App: React.FC = () => {
                           whiteSpace: 'pre-wrap', 
                           wordBreak: 'break-all',
                           margin: 0,
-                          fontFamily: 'monospace'
+                          fontFamily: 'monospace',
+                          fontSize: '13px'
                         }}>
-                          {msg.content.length > 500 
-                            ? msg.content.substring(0, 500) + '...' 
+                          {msg.content.length > 1000 
+                            ? msg.content.substring(0, 1000) + '\n\n...（内容过长已截断，完整内容已发送给大模型）' 
                             : msg.content}
                         </pre>
                       )}
