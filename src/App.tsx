@@ -286,7 +286,7 @@ const App: React.FC = () => {
         alignItems: 'center'
       }}>
         <Title level={3} style={{ color: 'white', margin: 0 }}>
-          LLM 根因定位与分析系统
+          基于大模型和告警因果图的网络告警智能根因定位系统
         </Title>
       </Header>
       
@@ -546,7 +546,7 @@ const App: React.FC = () => {
       </Content>
       
       <Footer style={{ textAlign: 'center' }}>
-        LLM 根因定位与分析系统 ©{new Date().getFullYear()}
+        基于大模型和告警因果图的网络告警智能根因定位系统 ©{new Date().getFullYear()}
       </Footer>
     </Layout>
   );
